@@ -1,0 +1,197 @@
+---
+title: "Practical Machine Learning"
+author: "Veronica Mudsam"
+date: "July 22, 2018"
+output:
+  html_document:
+    df_print: paged
+---
+
+## Background
+
+Using devices such as Jawbone Up, Nike FuelBand, and Fitbit it is now possible to collect a large amount of data about personal activity relatively inexpensively. These type of devices are part of the quantified self movement - a group of enthusiasts who take measurements about themselves regularly to improve their health, to find patterns in their behavior, or because they are tech geeks. One thing that people regularly do is quantify how much of a particular activity they do, but they rarely quantify how well they do it. In this project, my goal will be to use data from accelerometers on the belt, forearm, arm, and dumbell of 6 participants. They were asked to perform barbell lifts correctly and incorrectly in 5 different ways. 
+
+The data consists of a Training data and a Test data (to be used to validate the selected model).
+
+The goal of this project is to predict the manner in which they did the exercise. This is the "classe" variable in the training set. I may use any of the other variables to predict with.
+
+I will create a report describing how I built the model, how I used cross validation, what I think the expected out of sample error is. I will also use the prediction model to predict 20 different test cases.
+
+## Loading the data 
+```{r ,cache=TRUE, echo = FALSE}
+library(e1071)
+library(caret)
+library(rpart)
+library(rpart.plot)
+library(RColorBrewer)
+library(rattle)
+library(randomForest)
+library(corrplot)
+library(gbm)
+library(caret)
+```
+
+```{r, cache=TRUE}
+train_in <- read.csv('./pml-training.csv', header=T)
+valid_in <- read.csv('./pml-testing.csv', header=T)
+dim(train_in)
+dim(valid_in)
+
+```
+
+## Cleaning the data
+
+Remove if it containscontains missing values sice it will not give us any information. 
+
+
+```{r,cache=TRUE}
+trainData<- train_in[, colSums(is.na(train_in)) == 0]
+validData <- valid_in[, colSums(is.na(valid_in)) == 0]
+dim(trainData)
+dim(validData)
+
+```
+
+The first seven columns give information about the people who did the test, and also timestamps. We will not take them in our model.
+
+```{r,cache=TRUE}
+trainData <- trainData[, -c(1:7)]
+validData <- validData[, -c(1:7)]
+dim(trainData)
+dim(validData)
+
+```
+
+## Create partitioning
+
+Split the training data into 70% as train data and 30% as test data.
+
+```{r,cache=TRUE}
+set.seed(1234) 
+inTrain <- createDataPartition(trainData$classe, p = 0.7, list = FALSE)
+trainData <- trainData[inTrain, ]
+testData <- trainData[-inTrain, ]
+dim(trainData)
+dim(testData)
+```
+
+The Near Zero variance (NZV) variables are removed
+```{r,cache=TRUE}
+NZV <- nearZeroVar(trainData)
+trainData <- trainData[, -NZV]
+testData  <- testData[, -NZV]
+dim(trainData)
+```
+
+Remove variables that are mostly N/A
+```{r,cache=TRUE}
+AllNA    <- sapply(trainData, function(x) mean(is.na(x))) > 0.95
+trainData <- trainData[, AllNA==FALSE]
+testData  <- testData[, AllNA==FALSE]
+dim(trainData)
+
+```
+
+Find the highly correlated variables.
+```{r,cache=TRUE, fig.width=12,fig.height=12}
+cor_mat <- cor(trainData[, -53])
+corrplot(cor_mat,method = "square")
+```
+
+In the corrplot graph the correlated predictors (variables) are those with a dark color intersection.
+From the plot of correlation matrix, it is clear that lot of predictors are higly correlated with each other. So using PCA do reduce dimensions seem like an good option.
+
+```{r,cache=TRUE}
+prComp <- prcomp(trainData[,-53],scale. = TRUE)
+std_dev <- prComp$sdev
+pr_var <- std_dev^2
+prop_varex <- pr_var/sum(pr_var)
+sum(prop_varex[1:30])
+```
+
+30 Principal Components explain about 97.7 % of total variance.By using PCA, the dimensions can be reduced from 53 to 30. If it takes too long time to run Random Forest model the use of PCA could be effective
+
+
+
+##  Models
+
+In this case we are going to compare for the following algorithms: classification tree, random forest and boosting method.
+
+We will use cross validation is to select what type of prediction function to use by comparing different predictors. Also to limit the effects of overfitting, and to improve the efficicency of the models.
+
+We will set k=5 for our K-folds cross validation, one for each of the algorithms above.
+
+### Classification Tree
+
+```{r,cache=TRUE}
+trControl <- trainControl(method="cv", number=5)
+model_CT <- train(classe~., data=trainData, method="rpart", trControl=trControl)
+
+
+```
+
+```{r,cache=TRUE}
+trainpred <- predict(model_CT,newdata=testData)
+
+confMatCT <- confusionMatrix(testData$classe,trainpred)
+
+# display confusion matrix and model accuracy
+confMatCT$table
+confMatCT$overall[1]
+
+
+```
+
+The accurancy of the classification tree is very low about 50.02425%.
+
+The out-of-sample error is  49.97575% 
+
+
+### Random Forest
+
+```{r, cache=TRUE}
+modFit <- train(classe ~ ., method="rf", data=trainData)
+```
+
+```{r,cache=TRUE}
+predictions.2 <- predict(modFit, newdata=testData)
+CV.2 <- confusionMatrix(predictions.2, testData$classe)
+CV.2$table
+CV.2$overall[1]
+```
+The accurancy is 100%
+```{r}
+plot(CV.2[[2]], main="Confusion Matrix: Random Forest Model")
+plot(modFit)
+```
+
+
+
+## Prediction with Generalized Boosted Regression
+
+```{r,cache=TRUE}
+#train the model
+model_GBM <- train(classe~., data=trainData, method="gbm", trControl=trControl, verbose=FALSE)
+print(model_GBM)
+plot(model_GBM)
+#predict the model
+trainpred <- predict(model_GBM,newdata=testData)
+confMatGBM <- confusionMatrix(testData$classe,trainpred)
+confMatGBM$table
+confMatGBM$overall[1]
+```
+
+The accurancy of the Generalized Boosted Regression is  97.30844%.
+
+The out-of-sample error is  2.69156% 
+
+## Conclusions
+
+Compare the accuracy rate values of the three models, the 'Random Forest' model is the best option. We will use it on the validation data.
+```{r}
+Results <- predict(modFit, newdata=validData)
+Results
+```
+
+
+
